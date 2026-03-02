@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react';
 import { User, Candidate, ElectionStatus } from '../types';
-import { CheckCircle2, ChevronRight, Info, X, Clock, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, X } from 'lucide-react';
 import { clsx } from 'clsx';
-import { motion, AnimatePresence } from 'framer-motion'; // PERBAIKAN: Diubah dari motion/react
-import { db } from '../firebase'; // Import koneksi Firebase
-import { collection, query, onSnapshot, doc, updateDoc, increment, setDoc, getDoc } from 'firebase/firestore';
+import { motion, AnimatePresence } from 'framer-motion'; 
+import { db } from '../firebase'; 
+import { collection, onSnapshot, doc, updateDoc, increment, getDoc } from 'firebase/firestore';
 import { toast } from 'sonner';
 
 export default function Candidates({ user }: { user: User }) {
@@ -13,411 +13,63 @@ export default function Candidates({ user }: { user: User }) {
   const [loading, setLoading] = useState(true);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [voting, setVoting] = useState(false);
-  const [electionStatus, setElectionStatus] = useState<ElectionStatus>('in_progress');
 
   useEffect(() => {
-    // 1. Ambil Data Kandidat Secara Real-time
-    const unsubCandidates = onSnapshot(collection(db, 'candidates'), (snapshot) => {
-      const cands = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any;
-      setCandidates(cands);
+    const unsub = onSnapshot(collection(db, 'candidates'), (snapshot) => {
+      setCandidates(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any);
       setLoading(false);
     });
-
-    // 2. Cek apakah user ini sudah memilih
-    const checkUserVote = async () => {
-      const userRef = doc(db, 'users', user.id);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists() && userSnap.data().hasVoted) {
-        setHasVoted(true);
-      }
+    const checkVote = async () => {
+      const snap = await getDoc(doc(db, 'users', user.id.toString()));
+      if (snap.exists() && snap.data().hasVoted) setHasVoted(true);
     };
-
-    checkUserVote();
-    return () => unsubCandidates();
+    checkVote();
+    return () => unsub();
   }, [user.id]);
 
-  const handleVote = async (candidateId: string) => {
-    if (hasVoted) {
-      toast.error('Anda sudah menggunakan hak suara Anda.');
-      return;
-    }
-
+  const handleVote = async (id: string) => {
     setVoting(true);
     try {
-      // Tambah suara ke kandidat
-      const candidateRef = doc(db, 'candidates', candidateId);
-      await updateDoc(candidateRef, {
-        vote_count: increment(1)
-      });
-
-      // Tandai user sudah memilih
-      const userRef = doc(db, 'users', user.id);
-      await updateDoc(userRef, {
-        hasVoted: true,
-        votedFor: candidateId
-      });
-
+      await updateDoc(doc(db, 'candidates', id), { vote_count: increment(1) });
+      await updateDoc(doc(db, 'users', user.id.toString()), { hasVoted: true });
       setHasVoted(true);
       setSelectedCandidate(null);
-      toast.success('Suara Anda berhasil dikirim!');
-    } catch (error) {
-      console.error(error);
-      toast.error('Gagal mengirim suara. Coba lagi.');
-    } finally {
-      setVoting(false);
-    }
+      toast.success('Berhasil memilih!');
+    } catch (e) { toast.error('Gagal memilih'); }
+    finally { setVoting(false); }
   };
 
-  if (loading) return <div className="p-8 text-center text-slate-500">Memuat data kandidat...</div>;
+  if (loading) return <div className="p-8 text-center">Memuat...</div>;
 
   return (
-    <div className="w-full min-h-screen bg-slate-50 p-4 md:p-8">
-      <div className="max-w-4xl mx-auto">
-        <header className="mb-8">
-          <h1 className="text-2xl md:text-4xl font-black text-slate-900 mb-2">Pilih Agen Perubahan</h1>
-          <p className="text-slate-500 text-sm md:text-base">Gunakan hak suara Anda secara bijak untuk masa depan yang lebih baik.</p>
-        </header>
-
-        {hasVoted && (
-          <div className="mb-6 p-4 bg-emerald-100 border border-emerald-200 rounded-2xl flex items-center gap-3 text-emerald-800">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-            <p className="font-bold text-sm">Terima kasih! Anda telah selesai memberikan suara.</p>
+    <div className="p-4 max-w-4xl mx-auto">
+      <h1 className="text-2xl font-black mb-6">Pilih Kandidat</h1>
+      <div className="grid gap-4">
+        {candidates.map(c => (
+          <div key={c.id} className="p-4 bg-white rounded-2xl border flex justify-between items-center">
+            <div className="flex items-center gap-4">
+               <img src={c.avatar} className="w-12 h-12 rounded-xl object-cover" />
+               <span className="font-bold">{c.name}</span>
+            </div>
+            <button onClick={() => setSelectedCandidate(c)} className="text-emerald-600 font-bold">Detail</button>
           </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {candidates.map((candidate) => (
-            <motion.div
-              key={candidate.id}
-              whileHover={{ y: -4 }}
-              className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-4 relative overflow-hidden"
-            >
-              <img src={candidate.avatar} alt={candidate.name} className="w-16 h-16 md:w-20 md:h-20 rounded-2xl object-cover" />
-              <div className="flex-1 min-w-0">
-                <h3 className="font-bold text-slate-900 truncate">{candidate.name}</h3>
-                <p className="text-slate-500 text-xs mb-3">Kandidat #{candidate.id.toString().slice(0,3)}</p>
-                <button
-                  onClick={() => setSelectedCandidate(candidate)}
-                  className="px-4 py-1.5 bg-slate-100 hover:bg-emerald-600 hover:text-white text-slate-700 text-xs font-bold rounded-full transition-colors"
-                >
-                  Lihat Visi Misi
-                </button>
-              </div>
-              {hasVoted && (
-                <div className="absolute top-2 right-2 p-1 bg-emerald-500 rounded-full">
-                  <CheckCircle2 className="w-4 h-4 text-white" />
-                </div>
-              )}
-            </motion.div>
-          ))}
-        </div>
+        ))}
       </div>
-
-      {/* Modal Visi Misi */}
       <AnimatePresence>
         {selectedCandidate && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <motion.div 
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
-              className="bg-white w-full max-w-lg rounded-[2.5rem] overflow-hidden shadow-2xl"
-            >
-              <div className="relative h-40 bg-emerald-600">
-                <button onClick={() => setSelectedCandidate(null)} className="absolute top-4 right-4 p-2 bg-black/20 hover:bg-black/40 rounded-full text-white transition-colors">
-                  <X className="w-5 h-5" />
-                </button>
-                <div className="absolute -bottom-12 left-8 flex items-end gap-4">
-                  <img src={selectedCandidate.avatar} className="w-24 h-24 rounded-[2rem] border-4 border-white shadow-lg object-cover" />
-                </div>
-              </div>
-              <div className="pt-16 p-8">
-                <h2 className="text-2xl font-black text-slate-900">{selectedCandidate.name}</h2>
-                <p className="text-emerald-600 font-bold mb-6 italic">"Visi Misi untuk Perubahan"</p>
-                <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100 mb-8">
-                  <p className="text-slate-600 text-sm leading-relaxed">{selectedCandidate.vision_mission || "Menjadi agen perubahan yang berintegritas dan membawa inovasi baru."}</p>
-                </div>
-                <button
-                  disabled={hasVoted || voting}
-                  onClick={() => handleVote(selectedCandidate.id)}
-                  className={clsx(
-                    "w-full py-4 rounded-2xl font-bold transition-all shadow-lg flex items-center justify-center gap-2",
-                    hasVoted ? "bg-slate-200 text-slate-500 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700 active:scale-95"
-                  )}
-                >
-                  {voting ? 'Mengirim Suara...' : hasVoted ? 'Sudah Memilih' : 'Berikan Suara Sekarang'}
-                </button>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-  const handleVote = async (candidateId: number) => {
-    if (myVote) return;
-    setVoting(true);
-    try {
-      const res = await fetch('/api/vote', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ voter_id: user.id, candidate_id: candidateId })
-      });
-      if (res.ok) {
-        setMyVote({ candidate_id: candidateId });
-        setSelectedCandidate(null);
-      } else {
-        const data = await res.json();
-        alert(data.error || 'Gagal memberikan suara. Mungkin Anda sudah memilih.');
-      }
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setVoting(false);
-    }
-  };
-
-  if (loading) return <div className="p-8 text-center text-slate-500">Memuat kandidat...</div>;
-
-  return (
-    <div className="w-full">
-      <div className="p-4 md:p-6 border-b border-slate-200 bg-white sticky top-0 z-10 flex flex-col sm:flex-row justify-between items-start gap-4">
-        <div>
-          <h2 className="text-xl md:text-2xl font-extrabold text-slate-900 tracking-tight">{pageTitle}</h2>
-          <p className="text-sm md:text-base text-slate-500 mt-1">{pageDescription}</p>
-        </div>
-      </div>
-
-      <div className="p-4 md:p-6">
-        {/* Election Status Banner */}
-        <div className="mb-6 p-4 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-2xl shadow-md">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <Clock className="w-5 h-5" />
-              <h2 className="font-bold text-lg">Status Pemilihan</h2>
-            </div>
-            {endDate && (
-              <span className="text-xs bg-white/20 px-3 py-1.5 rounded-full font-medium">
-                Batas Waktu: {new Date(endDate).toLocaleDateString('id-ID')} {new Date(endDate).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            )}
-          </div>
-
-          {electionStatus === 'not_started' && (
-            <div className="text-center py-4 bg-white/10 rounded-xl border border-white/20">
-              <p className="font-bold text-lg">Pemilihan Belum Dimulai</p>
-              <p className="text-sm opacity-80 mt-1">Anda dapat melihat daftar kandidat, namun belum dapat memberikan suara.</p>
-            </div>
-          )}
-
-          {electionStatus === 'closed' && (
-            <div className="text-center py-4 bg-white/10 rounded-xl border border-white/20">
-              <p className="font-bold text-lg">Pemilihan Telah Berakhir</p>
-              <p className="text-sm opacity-80 mt-1">Sesi pemilihan telah ditutup. Terima kasih atas partisipasi Anda.</p>
-            </div>
-          )}
-
-          {electionStatus === 'in_progress' && (
-            <div className="flex items-center justify-between bg-white/20 rounded-xl p-4 border border-white/10 shadow-sm">
-              <div className="flex items-center gap-3">
-                <div className="w-3 h-3 bg-red-400 rounded-full animate-pulse" />
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-wider opacity-90">Sisa Waktu Voting</p>
-                  <p className="text-2xl font-mono font-bold leading-none mt-1">{timeLeft || '--:--:--'}</p>
-                </div>
-              </div>
-              <div className="text-right hidden sm:block">
-                <p className="text-xs font-bold uppercase tracking-wider opacity-90">Status</p>
-                <p className="text-sm font-bold mt-1">Sedang Berlangsung</p>
-              </div>
-            </div>
-          )}
-        </div>
-
-        {myVote && (
-          <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 px-4 py-3 rounded-xl flex items-start gap-3">
-            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
-            <div>
-              <p className="font-bold">Terima kasih telah berpartisipasi!</p>
-              <p className="text-sm text-emerald-700 mt-1">Anda sudah memberikan suara pada pemilihan ini.</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div className="p-4 md:p-6 grid gap-4 md:gap-6">
-        {candidates.length > 0 ? candidates.map((candidate) => (
-          <motion.div
-            layoutId={`candidate-${candidate.id}`}
-            key={candidate.id}
-            onClick={() => setSelectedCandidate(candidate)}
-            whileHover={{ y: -4, scale: 1.005 }}
-            transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-            className={clsx(
-              "bg-white border rounded-2xl p-4 md:p-6 cursor-pointer transition-all hover:shadow-xl",
-              myVote?.candidate_id === candidate.id ? "border-emerald-500 ring-1 ring-emerald-500" : "border-slate-200 hover:border-emerald-300"
-            )}
-          >
-            <div className="flex flex-col sm:flex-row items-start gap-3 md:gap-4">
-              <div className="flex items-center gap-3 w-full sm:w-auto">
-                <img src={candidate.avatar} alt={candidate.name} className="w-12 h-12 md:w-16 md:h-16 rounded-full border-2 border-slate-100" />
-                <div className="sm:hidden flex-1">
-                  <h3 className="font-bold text-base text-slate-900">{candidate.name}</h3>
-                  <p className="text-slate-500 text-xs">@{candidate.username}</p>
-                </div>
-                {myVote?.candidate_id === candidate.id && (
-                  <span className="sm:hidden bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-1 rounded-full flex items-center gap-1">
-                    <CheckCircle2 className="w-3 h-3" /> Pilihan
-                  </span>
-                )}
-              </div>
-              <div className="flex-1 w-full">
-                <div className="hidden sm:flex justify-between items-start">
-                  <div>
-                    <h3 className="font-bold text-lg text-slate-900">{candidate.name}</h3>
-                    <p className="text-slate-500 text-sm">@{candidate.username}</p>
-                  </div>
-                  {myVote?.candidate_id === candidate.id && (
-                    <span className="bg-emerald-100 text-emerald-700 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
-                      <CheckCircle2 className="w-3 h-3" /> Pilihan Anda
-                    </span>
-                  )}
-                </div>
-                
-                <div className="mt-2 sm:mt-4">
-                  <p className="text-xs md:text-sm font-bold text-slate-900 uppercase tracking-wider mb-1">{candidateLabels.label}</p>
-                  <p className="text-sm md:text-base text-slate-700 italic line-clamp-3 sm:line-clamp-none">"{candidate.innovation_program || 'Belum ada program inovasi'}"</p>
-                </div>
-
-                <div className="mt-3 sm:mt-4 flex items-center text-emerald-600 font-medium text-xs md:text-sm group">
-                  Lihat detail visi & misi <ChevronRight className="w-3 h-3 md:w-4 md:h-4 ml-1 group-hover:translate-x-1 transition-transform" />
-                </div>
-              </div>
-            </div>
-          </motion.div>
-        )) : (
-          <div className="bg-white border border-slate-200 rounded-3xl p-12 text-center">
-            <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 mx-auto mb-4">
-              <Plus className="w-8 h-8" />
-            </div>
-            <h3 className="text-lg font-bold text-slate-900">Belum Ada Kandidat</h3>
-            <p className="text-slate-500 max-w-xs mx-auto mt-1">Daftar kandidat akan muncul di sini setelah didaftarkan oleh admin.</p>
-          </div>
-        )}
-      </div>
-
-      {/* Modal Detail Kandidat */}
-      <AnimatePresence>
-        {selectedCandidate && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              onClick={() => setSelectedCandidate(null)}
-              className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40"
-            />
-            <motion.div
-              layoutId={`candidate-${selectedCandidate.id}`}
-              initial={{ opacity: 0, scale: 0.95, y: 20 }}
-              animate={{ opacity: 1, scale: 1, y: 0 }}
-              exit={{ opacity: 0, scale: 0.95, y: 20 }}
-              className="fixed inset-x-4 top-[10%] bottom-[10%] md:inset-auto md:top-1/2 md:left-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:w-full md:max-w-lg bg-white rounded-3xl z-50 overflow-hidden shadow-2xl flex flex-col"
-            >
-              <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-white to-transparent z-10 pointer-events-none rounded-t-3xl" />
-              
-              <button
-                onClick={() => setSelectedCandidate(null)}
-                className="absolute top-4 right-4 p-2 bg-slate-100/80 backdrop-blur-sm hover:bg-slate-200 rounded-full text-slate-600 transition-colors z-20 shadow-sm"
+          <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+            <motion.div initial={{scale:0.9}} animate={{scale:1}} className="bg-white p-6 rounded-3xl w-full max-w-sm">
+              <h2 className="text-xl font-bold mb-4">{selectedCandidate.name}</h2>
+              <button 
+                disabled={hasVoted || voting} 
+                onClick={() => handleVote(selectedCandidate.id)}
+                className="w-full bg-emerald-600 text-white py-3 rounded-xl font-bold disabled:bg-slate-300"
               >
-                <X className="w-5 h-5" />
+                {voting ? 'Proses...' : hasVoted ? 'Sudah Memilih' : 'Pilih Sekarang'}
               </button>
-
-              <div className="p-6 overflow-y-auto flex-1 relative scrollbar-hide">
-                <div className="flex flex-col items-center text-center gap-4 mb-8 mt-4">
-                  <div className="relative">
-                    <img 
-                      src={selectedCandidate.avatar} 
-                      alt={selectedCandidate.name} 
-                      className="w-24 h-24 md:w-28 md:h-28 rounded-full border-4 border-emerald-50 shadow-lg object-cover" 
-                    />
-                    <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-white p-1.5 rounded-full border-2 border-white">
-                      <CheckCircle className="w-4 h-4 fill-current" />
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="font-bold text-2xl md:text-3xl text-slate-900 leading-tight">{selectedCandidate.name}</h3>
-                    <p className="text-base text-slate-500 font-medium">@{selectedCandidate.username}</p>
-                  </div>
-                </div>
-
-                <div className="space-y-6 pb-4">
-                  <div className="bg-emerald-50 rounded-2xl p-5 border border-emerald-100 shadow-sm">
-                    <h4 className="font-bold text-emerald-900 uppercase tracking-wider text-xs mb-3 flex items-center gap-2">
-                      <Info className="w-4 h-4" /> Program Inovasi
-                    </h4>
-                    <p className="text-emerald-800 font-medium leading-relaxed italic">"{selectedCandidate.innovation_program || 'Belum ada program inovasi'}"</p>
-                  </div>
-
-                  {selectedCandidate.image_url && (
-                    <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm">
-                      <img src={selectedCandidate.image_url} alt="Campaign" className="w-full h-auto object-cover" />
-                    </div>
-                  )}
-
-                  <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
-                    <h4 className="font-bold text-slate-900 uppercase tracking-wider text-xs mb-3">Visi</h4>
-                    <div className="prose prose-slate prose-sm max-w-none">
-                      <p className="whitespace-pre-wrap text-slate-700 leading-relaxed">{selectedCandidate.vision || 'Belum ada visi'}</p>
-                    </div>
-                  </div>
-
-                  <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
-                    <h4 className="font-bold text-slate-900 uppercase tracking-wider text-xs mb-3">Misi</h4>
-                    <div className="prose prose-slate prose-sm max-w-none">
-                      <p className="whitespace-pre-wrap text-slate-700 leading-relaxed">{selectedCandidate.mission || 'Belum ada misi'}</p>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <div className="p-4 md:p-6 bg-white border-t border-slate-100 flex flex-col sm:flex-row gap-3">
-                <div className="flex gap-2 flex-1">
-                  <button
-                    onClick={() => {
-                      navigator.clipboard.writeText(`${window.location.origin}/candidates/${selectedCandidate.id}`);
-                      alert('Tautan profil kandidat disalin!');
-                    }}
-                    className="p-3 rounded-xl font-bold text-slate-500 bg-slate-50 border border-slate-200 hover:bg-slate-100 transition-colors flex items-center justify-center"
-                    title="Bagikan"
-                  >
-                    <Share2 className="w-5 h-5" />
-                  </button>
-                  <button
-                    onClick={() => setSelectedCandidate(null)}
-                    className="flex-1 px-4 py-3 rounded-xl font-bold text-slate-700 bg-slate-50 border border-slate-200 hover:bg-slate-100 transition-colors text-sm md:text-base"
-                  >
-                    Tutup
-                  </button>
-                </div>
-                {!myVote && electionStatus === 'in_progress' && (
-                  <button
-                    onClick={() => handleVote(selectedCandidate.id)}
-                    disabled={voting}
-                    className="w-full sm:w-auto sm:flex-[1.5] px-6 py-3 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 transition-all shadow-md shadow-emerald-200 disabled:opacity-50 flex justify-center items-center text-base active:scale-95"
-                  >
-                    {voting ? (
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                        Memproses...
-                      </div>
-                    ) : 'Pilih Kandidat'}
-                  </button>
-                )}
-              </div>
+              <button onClick={() => setSelectedCandidate(null)} className="w-full mt-2 text-slate-400">Tutup</button>
             </motion.div>
-          </>
+          </div>
         )}
       </AnimatePresence>
     </div>
