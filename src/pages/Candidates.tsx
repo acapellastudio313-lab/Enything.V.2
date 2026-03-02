@@ -1,107 +1,160 @@
-import { useState, useEffect, FormEvent } from 'react';
+import { useState, useEffect } from 'react';
 import { User, Candidate, ElectionStatus } from '../types';
-import { CheckCircle2, CheckCircle, ChevronRight, Info, Share2, Plus, X, Clock, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Info, X, Clock, AlertTriangle } from 'lucide-react';
 import { clsx } from 'clsx';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence } from 'framer-motion'; // PERBAIKAN: Diubah dari motion/react
+import { db } from '../firebase'; // Import koneksi Firebase
+import { collection, query, onSnapshot, doc, updateDoc, increment, setDoc, getDoc } from 'firebase/firestore';
+import { toast } from 'sonner';
 
 export default function Candidates({ user }: { user: User }) {
   const [candidates, setCandidates] = useState<Candidate[]>([]);
-  const [myVote, setMyVote] = useState<{ candidate_id: number } | null>(null);
+  const [hasVoted, setHasVoted] = useState(false);
   const [loading, setLoading] = useState(true);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [voting, setVoting] = useState(false);
-  const [electionStatus, setElectionStatus] = useState<ElectionStatus>('not_started');
-  const [endDate, setEndDate] = useState<string | null>(null);
-  const [timeLeft, setTimeLeft] = useState<string>('');
-  const [pageTitle, setPageTitle] = useState('Kandidat Agen Perubahan');
-  const [pageDescription, setPageDescription] = useState('Kenali visi dan misi para kandidat sebelum menentukan pilihan Anda.');
-
-  const [candidateLabels, setCandidateLabels] = useState({
-    label: 'Agen Perubahan',
-    descLabel: 'Visi & Misi'
-  });
-
-  const fetchData = () => {
-    setLoading(true);
-    Promise.all([
-      fetch('/api/candidates').then(res => res.json()),
-      fetch(`/api/my-vote?userId=${user.id}`).then(res => res.json()),
-      fetch(`/api/settings/status?t=${Date.now()}`).then(res => res.json()),
-      fetch('/api/settings/candidate_page').then(res => res.json()),
-      fetch('/api/settings/general').then(res => res.json())
-    ]).then(([candsData, voteData, statusData, pageSettings, generalSettings]) => {
-      setCandidates(candsData);
-      setMyVote(voteData);
-      setElectionStatus(statusData.status);
-      setEndDate(statusData.endDate);
-      setPageTitle(pageSettings.title);
-      setPageDescription(pageSettings.description);
-      setCandidateLabels({
-        label: generalSettings.candidateLabel || 'Agen Perubahan',
-        descLabel: generalSettings.candidateDescLabel || 'Visi & Misi'
-      });
-      setLoading(false);
-    }).catch(err => {
-      console.error('Error fetching candidates data:', err);
-      setLoading(false);
-    });
-  };
+  const [electionStatus, setElectionStatus] = useState<ElectionStatus>('in_progress');
 
   useEffect(() => {
-    fetchData();
+    // 1. Ambil Data Kandidat Secara Real-time
+    const unsubCandidates = onSnapshot(collection(db, 'candidates'), (snapshot) => {
+      const cands = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })) as any;
+      setCandidates(cands);
+      setLoading(false);
+    });
 
-    // WebSocket for real-time updates
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}`);
-
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.type === 'election:status_changed') {
-        setElectionStatus(data.status);
-      } else if (data.type === 'settings:updated' && data.section === 'end_date') {
-        setEndDate(data.endDate);
-      } else if (data.type === 'vote:cast') {
-        // Optional: update counts if needed, but we don't show them here
+    // 2. Cek apakah user ini sudah memilih
+    const checkUserVote = async () => {
+      const userRef = doc(db, 'users', user.id);
+      const userSnap = await getDoc(userRef);
+      if (userSnap.exists() && userSnap.data().hasVoted) {
+        setHasVoted(true);
       }
     };
 
-    return () => ws.close();
+    checkUserVote();
+    return () => unsubCandidates();
   }, [user.id]);
 
-  useEffect(() => {
-    if (electionStatus !== 'in_progress' || !endDate) {
-      setTimeLeft('');
+  const handleVote = async (candidateId: string) => {
+    if (hasVoted) {
+      toast.error('Anda sudah menggunakan hak suara Anda.');
       return;
     }
 
-    const calculateTimeLeft = () => {
-      const now = new Date().getTime();
-      const end = new Date(endDate).getTime();
-      const distance = end - now;
+    setVoting(true);
+    try {
+      // Tambah suara ke kandidat
+      const candidateRef = doc(db, 'candidates', candidateId);
+      await updateDoc(candidateRef, {
+        vote_count: increment(1)
+      });
 
-      if (distance <= 0) {
-        setTimeLeft('Waktu Habis');
-        setElectionStatus('closed');
-        return;
-      }
+      // Tandai user sudah memilih
+      const userRef = doc(db, 'users', user.id);
+      await updateDoc(userRef, {
+        hasVoted: true,
+        votedFor: candidateId
+      });
 
-      const days = Math.floor(distance / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((distance % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      const minutes = Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((distance % (1000 * 60)) / 1000);
+      setHasVoted(true);
+      setSelectedCandidate(null);
+      toast.success('Suara Anda berhasil dikirim!');
+    } catch (error) {
+      console.error(error);
+      toast.error('Gagal mengirim suara. Coba lagi.');
+    } finally {
+      setVoting(false);
+    }
+  };
 
-      let timeStr = '';
-      if (days > 0) timeStr += `${days}h `;
-      timeStr += `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-      setTimeLeft(timeStr);
-    };
+  if (loading) return <div className="p-8 text-center text-slate-500">Memuat data kandidat...</div>;
 
-    calculateTimeLeft();
-    const timer = setInterval(calculateTimeLeft, 1000);
+  return (
+    <div className="w-full min-h-screen bg-slate-50 p-4 md:p-8">
+      <div className="max-w-4xl mx-auto">
+        <header className="mb-8">
+          <h1 className="text-2xl md:text-4xl font-black text-slate-900 mb-2">Pilih Agen Perubahan</h1>
+          <p className="text-slate-500 text-sm md:text-base">Gunakan hak suara Anda secara bijak untuk masa depan yang lebih baik.</p>
+        </header>
 
-    return () => clearInterval(timer);
-  }, [electionStatus, endDate]);
+        {hasVoted && (
+          <div className="mb-6 p-4 bg-emerald-100 border border-emerald-200 rounded-2xl flex items-center gap-3 text-emerald-800">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+            <p className="font-bold text-sm">Terima kasih! Anda telah selesai memberikan suara.</p>
+          </div>
+        )}
 
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {candidates.map((candidate) => (
+            <motion.div
+              key={candidate.id}
+              whileHover={{ y: -4 }}
+              className="bg-white p-4 rounded-3xl border border-slate-200 shadow-sm flex items-center gap-4 relative overflow-hidden"
+            >
+              <img src={candidate.avatar} alt={candidate.name} className="w-16 h-16 md:w-20 md:h-20 rounded-2xl object-cover" />
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-slate-900 truncate">{candidate.name}</h3>
+                <p className="text-slate-500 text-xs mb-3">Kandidat #{candidate.id.toString().slice(0,3)}</p>
+                <button
+                  onClick={() => setSelectedCandidate(candidate)}
+                  className="px-4 py-1.5 bg-slate-100 hover:bg-emerald-600 hover:text-white text-slate-700 text-xs font-bold rounded-full transition-colors"
+                >
+                  Lihat Visi Misi
+                </button>
+              </div>
+              {hasVoted && (
+                <div className="absolute top-2 right-2 p-1 bg-emerald-500 rounded-full">
+                  <CheckCircle2 className="w-4 h-4 text-white" />
+                </div>
+              )}
+            </motion.div>
+          ))}
+        </div>
+      </div>
+
+      {/* Modal Visi Misi */}
+      <AnimatePresence>
+        {selectedCandidate && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white w-full max-w-lg rounded-[2.5rem] overflow-hidden shadow-2xl"
+            >
+              <div className="relative h-40 bg-emerald-600">
+                <button onClick={() => setSelectedCandidate(null)} className="absolute top-4 right-4 p-2 bg-black/20 hover:bg-black/40 rounded-full text-white transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+                <div className="absolute -bottom-12 left-8 flex items-end gap-4">
+                  <img src={selectedCandidate.avatar} className="w-24 h-24 rounded-[2rem] border-4 border-white shadow-lg object-cover" />
+                </div>
+              </div>
+              <div className="pt-16 p-8">
+                <h2 className="text-2xl font-black text-slate-900">{selectedCandidate.name}</h2>
+                <p className="text-emerald-600 font-bold mb-6 italic">"Visi Misi untuk Perubahan"</p>
+                <div className="bg-slate-50 p-5 rounded-3xl border border-slate-100 mb-8">
+                  <p className="text-slate-600 text-sm leading-relaxed">{selectedCandidate.vision_mission || "Menjadi agen perubahan yang berintegritas dan membawa inovasi baru."}</p>
+                </div>
+                <button
+                  disabled={hasVoted || voting}
+                  onClick={() => handleVote(selectedCandidate.id)}
+                  className={clsx(
+                    "w-full py-4 rounded-2xl font-bold transition-all shadow-lg flex items-center justify-center gap-2",
+                    hasVoted ? "bg-slate-200 text-slate-500 cursor-not-allowed" : "bg-emerald-600 text-white hover:bg-emerald-700 active:scale-95"
+                  )}
+                >
+                  {voting ? 'Mengirim Suara...' : hasVoted ? 'Sudah Memilih' : 'Berikan Suara Sekarang'}
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
   const handleVote = async (candidateId: number) => {
     if (myVote) return;
     setVoting(true);
